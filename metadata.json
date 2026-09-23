@@ -1,0 +1,6 @@
+{
+  "name": "BookQuiz AI",
+  "description": "Istalgan kitobni aqlli testga aylantiring. PDF yuklang, mavzularni tahlil qiling va sun'iy intellekt savollari bilan bilimingizni sinang.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
