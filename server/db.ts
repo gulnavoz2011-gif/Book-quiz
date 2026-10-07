@@ -36,9 +36,31 @@ export interface BookRecord {
   uploadedBy?: string;
 }
 
+export interface QuizResultDatabaseRecord {
+  id: string;
+  studentName: string;
+  studentUserId?: string;
+  bookTitle: string;
+  bookFileName: string;
+  date: string;
+  completedAt: string;
+  totalQuestions: number;
+  correctAnswers: number;
+  incorrectAnswers: number;
+  unansweredQuestions: number;
+  scorePercentage: number;
+  scoreLabel: string;
+  difficulty: string;
+  questionTypes: string[];
+  questions: any[];
+  timeTakenSeconds?: number;
+  createdAt: string;
+}
+
 interface DatabaseSchema {
   users: UserRecord[];
   books: BookRecord[];
+  quizResults: QuizResultDatabaseRecord[];
 }
 
 // Password hashing with PBKDF2 (industry standard)
@@ -95,7 +117,6 @@ function ensureDataDir() {
 
 function getInitialDatabase(): DatabaseSchema {
   const adminSalt = generateSalt();
-  const userSalt = generateSalt();
 
   const defaultUsers: UserRecord[] = [
     {
@@ -106,15 +127,6 @@ function getInitialDatabase(): DatabaseSchema {
       salt: adminSalt,
       role: 'admin',
       createdAt: '2026-01-01T00:00:00.000Z',
-    },
-    {
-      id: 'usr_student',
-      name: 'Azizbek Rahimov (Talaba)',
-      email: 'talaba@bookquiz.uz',
-      passwordHash: hashPassword('user123', userSalt),
-      salt: userSalt,
-      role: 'user',
-      createdAt: '2026-01-10T00:00:00.000Z',
     },
   ];
 
@@ -247,7 +259,9 @@ function getInitialDatabase(): DatabaseSchema {
     },
   ];
 
-  return { users: defaultUsers, books: defaultBooks };
+  const defaultQuizzes: QuizResultDatabaseRecord[] = [];
+
+  return { users: defaultUsers, books: defaultBooks, quizResults: defaultQuizzes };
 }
 
 export function loadDatabase(): DatabaseSchema {
@@ -258,7 +272,10 @@ export function loadDatabase(): DatabaseSchema {
     try {
       const data = fs.readFileSync(DB_FILE, 'utf-8');
       dbMemory = JSON.parse(data);
-      return dbMemory!;
+      if (dbMemory) {
+        dbMemory.quizResults = dbMemory.quizResults || [];
+        return dbMemory;
+      }
     } catch (e) {
       console.error('Error reading db.json, reinitializing:', e);
     }
@@ -279,6 +296,22 @@ export function saveDatabase(data: DatabaseSchema): void {
   }
 }
 
+export const ADMIN_SECRET_CODE = process.env.ADMIN_SECRET_CODE || 'gulnavozim';
+export const MAX_ADMINS = 3;
+
+export function getAdminUsers(): UserRecord[] {
+  const db = loadDatabase();
+  return db.users.filter((u) => u.role === 'admin');
+}
+
+export function getAdminCount(): number {
+  return getAdminUsers().length;
+}
+
+export function verifyAdminSecretCode(code: string): boolean {
+  return code?.trim() === ADMIN_SECRET_CODE;
+}
+
 // User Operations
 export function findUserByEmail(email: string): UserRecord | undefined {
   const db = loadDatabase();
@@ -290,11 +323,30 @@ export function findUserById(id: string): UserRecord | undefined {
   return db.users.find((u) => u.id === id);
 }
 
-export function registerUser(name: string, email: string, password: string, role: 'admin' | 'user' = 'user'): UserRecord {
+export function registerUser(
+  name: string,
+  email: string,
+  password: string,
+  role: 'admin' | 'user' = 'user',
+  adminCode?: string
+): UserRecord {
   const db = loadDatabase();
   const existing = findUserByEmail(email);
   if (existing) {
     throw new Error('Email allaqachon ro\'yxatdan o\'tgan.');
+  }
+
+  // Strict Admin checks requested by user:
+  // 1) Must provide valid admin secret code
+  // 2) Maximum 3 admins total allowed across the whole platform
+  if (role === 'admin') {
+    if (!adminCode || adminCode.trim() !== ADMIN_SECRET_CODE) {
+      throw new Error("Admin maxfiy kodi noto'g'ri! Faqat ruxsat etilgan maxfiy kod orqali admin bo'lish mumkin.");
+    }
+    const currentAdmins = getAdminCount();
+    if (currentAdmins >= MAX_ADMINS) {
+      throw new Error(`Adminlar soni limitga yetdi (maksimal ${MAX_ADMINS} nafar). 3 kishidan boshqa hech kim admin panelidan foydalana olmaydi!`);
+    }
   }
 
   const salt = generateSalt();
@@ -429,3 +481,151 @@ export function getDistinctGenres(): string[] {
   });
   return Array.from(genres);
 }
+
+// Student Login / Registration by Name (Student Name IS the Password)
+export function loginOrRegisterStudentByName(studentName: string): {
+  user: UserRecord;
+  token: string;
+  isNew: boolean;
+} {
+  const db = loadDatabase();
+  const cleanName = studentName?.trim();
+  if (!cleanName || cleanName.length < 2) {
+    throw new Error("Iltimos, ism-sharifingizni to'liq kiriting (kamida 2 ta belgi).");
+  }
+
+  // Look for existing student by name (case-insensitive)
+  let user = db.users.find(
+    (u) => u.role === 'user' && u.name.trim().toLowerCase() === cleanName.toLowerCase()
+  );
+
+  let isNew = false;
+  if (!user) {
+    // Register new student where password = studentName
+    const salt = generateSalt();
+    const passwordHash = hashPassword(cleanName, salt);
+    const slug = cleanName
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '_')
+      .replace(/_+/g, '_')
+      .substring(0, 20);
+    const uniqueEmail = `${slug}_${Date.now().toString(36)}@student.bookquiz.uz`;
+
+    user = {
+      id: `usr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      name: cleanName,
+      email: uniqueEmail,
+      passwordHash,
+      salt,
+      role: 'user',
+      createdAt: new Date().toISOString(),
+    };
+    db.users.push(user);
+    saveDatabase(db);
+    isNew = true;
+  } else {
+    // If student exists, guarantee student name acts as current password
+    const salt = user.salt || generateSalt();
+    user.salt = salt;
+    user.passwordHash = hashPassword(cleanName, salt);
+    saveDatabase(db);
+  }
+
+  const token = generateToken({ userId: user.id, email: user.email, role: user.role });
+  return { user, token, isNew };
+}
+
+// Quiz Results Database Operations
+export function saveQuizToDatabase(quizData: Partial<QuizResultDatabaseRecord>): QuizResultDatabaseRecord {
+  const db = loadDatabase();
+  db.quizResults = db.quizResults || [];
+
+  const studentName = (quizData.studentName || 'Talaba').trim();
+  const id = quizData.id || `quiz_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const now = new Date().toISOString();
+
+  // If already exists with this ID, update it
+  const existingIdx = db.quizResults.findIndex((q) => q.id === id);
+
+  const record: QuizResultDatabaseRecord = {
+    id,
+    studentName,
+    studentUserId: quizData.studentUserId,
+    bookTitle: quizData.bookTitle || 'Kitob testi',
+    bookFileName: quizData.bookFileName || 'kitob.pdf',
+    date: quizData.date || new Date().toLocaleDateString('uz-UZ'),
+    completedAt: quizData.completedAt || now,
+    totalQuestions: Number(quizData.totalQuestions) || 0,
+    correctAnswers: Number(quizData.correctAnswers) || 0,
+    incorrectAnswers: Number(quizData.incorrectAnswers) || 0,
+    unansweredQuestions: Number(quizData.unansweredQuestions) || 0,
+    scorePercentage: Number(quizData.scorePercentage) || 0,
+    scoreLabel: quizData.scoreLabel || '',
+    difficulty: quizData.difficulty || 'medium',
+    questionTypes: quizData.questionTypes || [],
+    questions: quizData.questions || [],
+    timeTakenSeconds: Number(quizData.timeTakenSeconds) || 0,
+    createdAt: now,
+  };
+
+  if (existingIdx !== -1) {
+    db.quizResults[existingIdx] = record;
+  } else {
+    // Prepend so newest is at the top
+    db.quizResults.unshift(record);
+  }
+
+  saveDatabase(db);
+  return record;
+}
+
+export function getQuizzesFromDatabase(filter?: {
+  studentName?: string;
+  studentUserId?: string;
+  search?: string;
+}): QuizResultDatabaseRecord[] {
+  const db = loadDatabase();
+  db.quizResults = db.quizResults || [];
+  let results = [...db.quizResults];
+
+  if (filter?.studentUserId) {
+    results = results.filter((q) => q.studentUserId === filter.studentUserId);
+  } else if (filter?.studentName && filter.studentName.trim()) {
+    const sName = filter.studentName.trim().toLowerCase();
+    results = results.filter((q) => q.studentName.toLowerCase().includes(sName));
+  }
+
+  if (filter?.search && filter.search.trim()) {
+    const s = filter.search.trim().toLowerCase();
+    results = results.filter(
+      (q) =>
+        q.studentName.toLowerCase().includes(s) ||
+        q.bookTitle.toLowerCase().includes(s) ||
+        q.scoreLabel.toLowerCase().includes(s)
+    );
+  }
+
+  // Sort descending by date/completedAt
+  results.sort((a, b) => new Date(b.completedAt || b.createdAt).getTime() - new Date(a.completedAt || a.createdAt).getTime());
+
+  return results;
+}
+
+export function getQuizByIdFromDatabase(id: string): QuizResultDatabaseRecord | undefined {
+  const db = loadDatabase();
+  db.quizResults = db.quizResults || [];
+  return db.quizResults.find((q) => q.id === id);
+}
+
+export function deleteQuizFromDatabase(id: string): boolean {
+  const db = loadDatabase();
+  db.quizResults = db.quizResults || [];
+  const initialLen = db.quizResults.length;
+  db.quizResults = db.quizResults.filter((q) => q.id !== id);
+  if (db.quizResults.length !== initialLen) {
+    saveDatabase(db);
+    return true;
+  }
+  return false;
+}
+

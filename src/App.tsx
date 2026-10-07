@@ -34,13 +34,15 @@ import {
   requestBookAnalysis,
   requestGenerateQuiz,
   requestEvaluateShortAnswer,
+  apiSaveQuizToDatabase,
+  apiGetQuizzesFromDatabase,
 } from './utils/apiClient';
 import { useLanguage } from './context/LanguageContext';
 import { useAuth } from './context/AuthContext';
 
 export default function App() {
   const { language, t } = useLanguage();
-  const { authModalOpen, setAuthModalOpen } = useAuth();
+  const { user, token, studentLogin, authModalOpen, setAuthModalOpen } = useAuth();
 
   // Navigation State
   const [currentView, setCurrentView] = useState<ActiveAppView>('home');
@@ -51,6 +53,7 @@ export default function App() {
   const [activeQuestions, setActiveQuestions] = useState<QuizQuestion[]>([]);
   const [activeResult, setActiveResult] = useState<QuizResultRecord | null>(null);
   const [selectedReaderBook, setSelectedReaderBook] = useState<LibraryBook | null>(null);
+  const [quizStartTime, setQuizStartTime] = useState<number | null>(null);
   const [quizProgress, setQuizProgress] = useState<QuizProgressState>({
     currentIndex: 0,
     totalQuestions: 0,
@@ -65,9 +68,31 @@ export default function App() {
   const [savedQuizzes, setSavedQuizzes] = useState<QuizResultRecord[]>([]);
 
   useEffect(() => {
-    const loaded = getSavedQuizzes();
-    setSavedQuizzes(loaded);
-  }, []);
+    const localQuizzes = getSavedQuizzes();
+    setSavedQuizzes(localQuizzes);
+
+    async function syncFromDb() {
+      try {
+        const dbQuizzes = await apiGetQuizzesFromDatabase({
+          studentUserId: user?.id,
+          token,
+        });
+        if (dbQuizzes && Array.isArray(dbQuizzes) && dbQuizzes.length > 0) {
+          setSavedQuizzes((prev) => {
+            const map = new Map<string, QuizResultRecord>();
+            dbQuizzes.forEach((q) => map.set(q.id, q));
+            prev.forEach((q) => {
+              if (!map.has(q.id)) map.set(q.id, q);
+            });
+            return Array.from(map.values());
+          });
+        }
+      } catch (e) {
+        // Fallback to local storage if offline
+      }
+    }
+    syncFromDb();
+  }, [user, token]);
 
   // 1. When a book is uploaded or sample book selected
   const handleBookReady = (book: UploadedBook) => {
@@ -127,6 +152,7 @@ export default function App() {
       }
 
       setActiveQuestions(questions);
+      setQuizStartTime(Date.now());
       setQuizProgress({
         currentIndex: 0,
         totalQuestions: questions.length,
@@ -139,8 +165,8 @@ export default function App() {
     }
   };
 
-  // 3. When quiz is submitted: Evaluate answers
-  const handleQuizSubmit = async (answers: Record<string, string>, timeSpentSeconds: number) => {
+  // 3. When quiz is submitted: Evaluate answers and save to database
+  const handleQuizSubmit = async (answers: Record<string, string>, studentName?: string) => {
     if (!activeBook || !activeConfig) return;
 
     setIsEvaluatingAnswers(true);
@@ -190,9 +216,14 @@ export default function App() {
       const incorrectAnswers = detailedQuestions.filter((q) => q.userAnswer && !q.isCorrect).length;
       const unansweredQuestions = totalQuestions - (correctAnswers + incorrectAnswers);
       const scorePercentage = totalQuestions > 0 ? Math.round((correctAnswers / totalQuestions) * 100) : 0;
+      const timeSpentSeconds = quizStartTime ? Math.max(1, Math.round((Date.now() - quizStartTime) / 1000)) : 120;
+
+      const finalStudentName = (studentName || user?.name || 'Talaba').trim();
 
       const record: QuizResultRecord = {
-        id: `quiz_${Date.now()}`,
+        id: `quiz_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        studentName: finalStudentName,
+        studentUserId: user?.id,
         date: new Date().toLocaleDateString('uz-UZ'),
         completedAt: new Date().toISOString(),
         bookTitle: activeBook.analysis?.title || activeBook.fileName.replace(/\.pdf$/i, ''),
@@ -210,9 +241,27 @@ export default function App() {
         scoreLabel: getScoreLabel(scorePercentage),
       };
 
+      // 1. Save locally
       const updatedHistory = saveQuizResult(record);
       setSavedQuizzes(updatedHistory);
       setActiveResult(record);
+
+      // 2. Persist to database API
+      try {
+        await apiSaveQuizToDatabase(record, token);
+      } catch (dbErr) {
+        console.warn('Backend database save fallback to local storage:', dbErr);
+      }
+
+      // 3. If student entered a name and was not logged in, auto-login student (student name = password)
+      if (!user && finalStudentName && finalStudentName !== 'Talaba') {
+        try {
+          await studentLogin(finalStudentName);
+        } catch (authErr) {
+          console.warn('Auto student login error:', authErr);
+        }
+      }
+
       setCurrentView('quiz_results');
     } catch (err: any) {
       console.error('Quiz evaluation error:', err);

@@ -10,6 +10,7 @@ import {
   PlusCircle,
   FileText,
   RotateCcw,
+  GraduationCap,
 } from 'lucide-react';
 import { QuizResultRecord } from '../types';
 import { useLanguage } from '../context/LanguageContext';
@@ -32,9 +33,11 @@ export const MyQuizzesView: React.FC<MyQuizzesViewProps> = ({
   const { t, language } = useLanguage();
   const [searchTerm, setSearchTerm] = useState('');
 
-  const filteredQuizzes = quizzes.filter((q) =>
-    q.bookTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    q.bookFileName.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredQuizzes = quizzes.filter(
+    (q) =>
+      q.bookTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      q.bookFileName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (q.studentName && q.studentName.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   const getLabelColor = (percentage: number) => {
@@ -131,10 +134,18 @@ export const MyQuizzesView: React.FC<MyQuizzesViewProps> = ({
                       <span className="text-xs font-semibold text-slate-900 line-clamp-1">
                         {quiz.bookFileName}
                       </span>
-                      <span className="text-[11px] text-slate-400 flex items-center gap-1">
-                        <Calendar className="w-3 h-3 text-slate-400" />
-                        {quiz.date}
-                      </span>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                          <Calendar className="w-3 h-3 text-slate-400" />
+                          {quiz.date}
+                        </span>
+                        {quiz.studentName && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100">
+                            <GraduationCap className="w-3 h-3 text-blue-600" />
+                            <span>{quiz.studentName}</span>
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 

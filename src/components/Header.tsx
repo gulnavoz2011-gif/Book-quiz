@@ -31,7 +31,7 @@ export const Header: React.FC<HeaderProps> = ({
   quizProgress,
 }) => {
   const { language, setLanguage, t } = useLanguage();
-  const { user, isAuthenticated, isAdmin, logout, setAuthModalOpen } = useAuth();
+  const { user, isAuthenticated, isAdmin, isAdminVerified, logout, setAuthModalOpen } = useAuth();
 
   const isQuizActive = currentView === 'quiz_active' && !!quizProgress && quizProgress.totalQuestions > 0;
   const currentQNum = quizProgress ? quizProgress.currentIndex + 1 : 0;
@@ -168,13 +168,7 @@ export const Header: React.FC<HeaderProps> = ({
               {/* Admin Panel */}
               <button
                 id="nav-admin-panel-btn"
-                onClick={() => {
-                  if (!isAuthenticated) {
-                    setAuthModalOpen(true);
-                  } else {
-                    onNavigate('admin');
-                  }
-                }}
+                onClick={() => onNavigate('admin')}
                 className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-medium transition-all flex items-center gap-1.5 ${
                   currentView === 'admin'
                     ? 'bg-purple-50 text-purple-700 font-bold border border-purple-200/80'
@@ -183,8 +177,14 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 <Shield className="w-4 h-4 text-purple-600" />
                 <span className="hidden lg:inline">{t.nav.adminPanel}</span>
-                {isAdmin && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-purple-600" />
+                {isAdminVerified ? (
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    ✓ Admin
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+                    🔒 Parol
+                  </span>
                 )}
               </button>
 
@@ -229,7 +229,7 @@ export const Header: React.FC<HeaderProps> = ({
                       {user.name.split(' ')[0]}
                     </span>
                     <span className="text-[10px] text-blue-600 font-semibold uppercase">
-                      {user.role === 'admin' ? 'Admin' : 'Kitobxon'}
+                      {user.role === 'admin' ? 'Admin' : user.role === 'student' ? 'Talaba' : 'Kitobxon'}
                     </span>
                   </div>
 

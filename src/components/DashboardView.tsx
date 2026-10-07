@@ -9,6 +9,8 @@ import {
   PlusCircle,
   FileText,
   Calendar,
+  Sparkles,
+  HardDrive,
 } from 'lucide-react';
 import { QuizResultRecord, StudentDashboardStats } from '../types';
 import { useLanguage } from '../context/LanguageContext';
@@ -57,11 +59,40 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <button
           id="btn-dash-new-quiz"
           onClick={onNewQuiz}
-          className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-semibold flex items-center gap-2 transition-colors shadow-sm self-start sm:self-auto"
+          className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-semibold flex items-center gap-2 transition-colors shadow-sm self-start sm:self-auto cursor-pointer"
         >
           <PlusCircle className="w-4 h-4" />
           <span>{t.dashboard.uploadNewBook}</span>
         </button>
+      </div>
+
+      {/* 500 MB Book Capacity Feature Card */}
+      <div className="mb-8 p-5 sm:p-6 rounded-2xl bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white shadow-md relative overflow-hidden">
+        <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="max-w-xl">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/20 text-blue-200 text-xs font-semibold border border-blue-400/30 mb-2">
+              <Sparkles className="w-3.5 h-3.5 text-blue-400" />
+              <span>{language === 'uz' ? "500 MB gacha katta kitoblar yuklamasi" : "Up to 500 MB Book Capacity"}</span>
+            </div>
+            <h3 className="text-lg sm:text-xl font-bold tracking-tight text-white mb-1">
+              {language === 'uz'
+                ? "Katta hajmdagi darslik va kitoblarni o'qish hamda test topshirish"
+                : "Read & take quizzes from large textbooks and books"}
+            </h3>
+            <p className="text-xs sm:text-sm text-blue-200/90 leading-relaxed">
+              {language === 'uz'
+                ? "Talabalar 500 MB gacha bo'lgan yirik PDF kitoblar, ensiklopediyalar va darsliklarni qulay o'qishlari hamda ular bo'yicha sun'iy intellekt testlarini topshirishlari mumkin."
+                : "Students can now upload and read large PDF textbooks, encyclopedias, and books up to 500 MB with instant AI quiz generation."}
+            </p>
+          </div>
+          <button
+            onClick={onNewQuiz}
+            className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs sm:text-sm font-bold transition-all shadow-md flex items-center gap-2 whitespace-nowrap self-start md:self-auto cursor-pointer"
+          >
+            <BookOpen className="w-4 h-4" />
+            <span>{language === 'uz' ? "Kitob yuklash (500 MB)" : "Upload Book (500 MB)"}</span>
+          </button>
+        </div>
       </div>
 
       {/* 4 Stat Cards */}

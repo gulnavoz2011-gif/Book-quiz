@@ -48,6 +48,8 @@ export interface QuizSettingsConfig {
 
 export interface QuizResultRecord {
   id: string;
+  studentName?: string;
+  studentUserId?: string;
   bookTitle: string;
   bookFileName: string;
   date: string;
@@ -82,7 +84,7 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  role: 'admin' | 'user';
+  role: 'admin' | 'user' | 'student';
   createdAt: string;
 }
 

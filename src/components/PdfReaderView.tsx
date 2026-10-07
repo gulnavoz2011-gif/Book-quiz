@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { LibraryBook } from '../types';
 import { useLanguage } from '../context/LanguageContext';
+import { formatFileSize } from '../utils/pdfExtractor';
 
 // Set up worker
 if (typeof window !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
@@ -43,14 +44,16 @@ export const PdfReaderView: React.FC<PdfReaderViewProps> = ({
   const [totalPages, setTotalPages] = useState<number>(book.pagesCount || 1);
   const [scale, setScale] = useState<number>(1.2);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [loadingPercent, setLoadingPercent] = useState<number>(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [pageInputVal, setPageInputVal] = useState<string>('1');
 
-  // Load PDF Document
+  // Load PDF Document (supports large books up to 500 MB with progress tracking)
   useEffect(() => {
     let isCancelled = false;
     setIsLoading(true);
+    setLoadingPercent(0);
     setErrorMessage(null);
 
     async function loadPdf() {
@@ -62,7 +65,17 @@ export const PdfReaderView: React.FC<PdfReaderViewProps> = ({
         const loadingTask = pdfjsLib.getDocument({
           url: book.pdfUrl,
           useSystemFonts: true,
+          disableAutoFetch: false,
+          disableStream: false,
+          rangeChunkSize: 65536 * 16, // 1MB chunks for huge files up to 500 MB
         });
+
+        loadingTask.onProgress = (progressData: { loaded: number; total: number }) => {
+          if (progressData && progressData.total > 0 && !isCancelled) {
+            const pct = Math.min(100, Math.round((progressData.loaded / progressData.total) * 100));
+            setLoadingPercent(pct);
+          }
+        };
 
         const doc = await loadingTask.promise;
         if (!isCancelled) {
@@ -223,10 +236,21 @@ export const PdfReaderView: React.FC<PdfReaderViewProps> = ({
           </button>
 
           <div className="border-l border-slate-700 pl-3">
-            <h2 className="text-sm font-semibold text-white truncate max-w-[200px] sm:max-w-xs md:max-w-md">
-              {book.title}
-            </h2>
-            <p className="text-[11px] text-slate-400 truncate max-w-xs">{book.author}</p>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-white truncate max-w-[180px] sm:max-w-xs md:max-w-md">
+                {book.title}
+              </h2>
+              {book.fileSize && (
+                <span className="hidden sm:inline-flex text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                  {formatFileSize(book.fileSize)}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 text-[11px] text-slate-400">
+              <span className="truncate max-w-xs">{book.author}</span>
+              <span className="hidden md:inline text-slate-600">•</span>
+              <span className="hidden md:inline text-blue-400 font-medium">500 MB gacha qo'llab-quvvatlanadi</span>
+            </div>
           </div>
         </div>
 
@@ -314,10 +338,25 @@ export const PdfReaderView: React.FC<PdfReaderViewProps> = ({
       {/* Reader Main Content Area */}
       <div className="flex-1 overflow-auto flex items-center justify-center p-4 sm:p-8 bg-slate-950">
         {isLoading && (
-          <div className="flex flex-col items-center justify-center py-20 text-center">
+          <div className="flex flex-col items-center justify-center py-20 text-center max-w-sm mx-auto">
             <div className="w-12 h-12 border-3 border-blue-500/30 border-t-blue-500 rounded-full animate-spin mb-4" />
-            <p className="text-sm font-medium text-slate-300">{t.reader.loadingDocument}</p>
-            <p className="text-xs text-slate-500 mt-1">{book.title}</p>
+            <p className="text-sm font-semibold text-white mb-1">
+              {language === 'uz' ? "Kitob yuklanmoqda..." : t.reader.loadingDocument}
+            </p>
+            <p className="text-xs text-slate-400 mb-3 truncate max-w-xs">
+              {book.title} {book.fileSize ? `(${formatFileSize(book.fileSize)})` : ''}
+            </p>
+            <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden mb-2">
+              <div
+                className="bg-blue-500 h-full rounded-full transition-all duration-300"
+                style={{ width: `${loadingPercent > 0 ? loadingPercent : 35}%` }}
+              />
+            </div>
+            <p className="text-[11px] text-blue-400 font-medium">
+              {language === 'uz'
+                ? `500 MB gacha bo'lgan katta kitoblar yuklamasi qo'llab-quvvatlanadi ${loadingPercent > 0 ? `(${loadingPercent}%)` : ''}`
+                : `Supports large book loading up to 500 MB ${loadingPercent > 0 ? `(${loadingPercent}%)` : ''}`}
+            </p>
           </div>
         )}
 

@@ -18,6 +18,16 @@ import {
   updateBook,
   deleteBook,
   getDistinctGenres,
+  ADMIN_SECRET_CODE,
+  MAX_ADMINS,
+  getAdminCount,
+  getAdminUsers,
+  verifyAdminSecretCode,
+  loginOrRegisterStudentByName,
+  saveQuizToDatabase,
+  getQuizzesFromDatabase,
+  getQuizByIdFromDatabase,
+  deleteQuizFromDatabase,
 } from './db';
 
 export const apiRouter = express.Router();
@@ -68,10 +78,17 @@ const requireAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
   if (!req.user || req.user.role !== 'admin') {
     return res.status(403).json({ error: 'Ushbu amal faqat administratorlar uchun ruxsat etilgan.' });
   }
+
+  // Check admin code header if supplied or ensure strict validation
+  const adminCodeHeader = req.headers['x-admin-code'] as string | undefined;
+  if (adminCodeHeader && !verifyAdminSecretCode(adminCodeHeader)) {
+    return res.status(403).json({ error: "Noto'g'ri admin maxfiy kodi!" });
+  }
+
   next();
 };
 
-// --- Health Check ---
+// --- Health & Admin Status Check ---
 apiRouter.get('/health', (_req: Request, res: Response) => {
   const hasKey = Boolean(process.env.GEMINI_API_KEY);
   res.json({
@@ -82,10 +99,111 @@ apiRouter.get('/health', (_req: Request, res: Response) => {
   });
 });
 
+apiRouter.get('/auth/admin-status', (_req: Request, res: Response) => {
+  const adminCount = getAdminCount();
+  return res.json({
+    success: true,
+    adminCount,
+    maxAdmins: MAX_ADMINS,
+    availableSlots: Math.max(0, MAX_ADMINS - adminCount),
+    canRegisterAdmin: adminCount < MAX_ADMINS,
+  });
+});
+
+apiRouter.post('/auth/verify-admin-code', (req: Request, res: Response) => {
+  const { code } = req.body;
+  const adminCount = getAdminCount();
+
+  if (!code || !verifyAdminSecretCode(code)) {
+    return res.status(403).json({
+      success: false,
+      error: "Admin maxfiy paroli noto'g'ri! Faqat ruxsat etilgan maxfiy parol orqali kirish mumkin.",
+      adminCount,
+      maxAdmins: MAX_ADMINS,
+    });
+  }
+
+  // Find existing admin or initialize primary admin
+  const admins = getAdminUsers();
+  let adminUser = admins[0];
+  if (!adminUser) {
+    adminUser = registerUser('Administrator', 'admin@bookquiz.uz', 'Admin2026!', 'admin', code);
+  }
+
+  const token = generateToken({ userId: adminUser.id, email: adminUser.email, role: 'admin' });
+
+  return res.json({
+    success: true,
+    verified: true,
+    token,
+    user: {
+      id: adminUser.id,
+      name: adminUser.name,
+      email: adminUser.email,
+      role: 'admin',
+    },
+    message: "Admin paroli muvaffaqiyatli tasdiqlandi.",
+    adminCount,
+    maxAdmins: MAX_ADMINS,
+  });
+});
+
+// Admin-only management routes (strictly restricted to verified admins)
+apiRouter.get('/auth/admins', authenticateToken, requireAdmin, (_req: Request, res: Response) => {
+  const admins = getAdminUsers().map((u) => ({
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    createdAt: u.createdAt,
+    role: u.role,
+  }));
+  return res.json({
+    success: true,
+    admins,
+    total: admins.length,
+    maxAdmins: MAX_ADMINS,
+    availableSlots: Math.max(0, MAX_ADMINS - admins.length),
+  });
+});
+
+apiRouter.post('/auth/admin-register', authenticateToken, requireAdmin, (req: Request, res: Response) => {
+  try {
+    const { name, email, password } = req.body;
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'Ism, email va parol kiritilishi shart.' });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Parol kamida 6 ta belgidan iborat bo\'lishi kerak.' });
+    }
+
+    const currentAdmins = getAdminCount();
+    if (currentAdmins >= MAX_ADMINS) {
+      return res.status(400).json({
+        error: `Adminlar soni limitga yetdi (maksimal ${MAX_ADMINS} nafar). 3 kishidan ko'p admin bo'lishi mumkin emas!`
+      });
+    }
+
+    const newAdmin = registerUser(name, email, password, 'admin', ADMIN_SECRET_CODE);
+    return res.json({
+      success: true,
+      user: {
+        id: newAdmin.id,
+        name: newAdmin.name,
+        email: newAdmin.email,
+        role: newAdmin.role,
+        createdAt: newAdmin.createdAt,
+      },
+      message: "Yangi admin muvaffaqiyatli ro'yxatdan o'tkazildi.",
+    });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'Admin qo\'shishda xatolik yuz berdi.' });
+  }
+});
+
 // --- Auth Endpoints ---
 apiRouter.post('/auth/register', (req: Request, res: Response) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, adminCode } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({ error: 'Ism, email va parol kiritilishi shart.' });
@@ -95,10 +213,10 @@ apiRouter.post('/auth/register', (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Parol kamida 6 ta belgidan iborat bo\'lishi kerak.' });
     }
 
-    // Assign role (admin only if requested with special key or explicitly chosen in dev/demo)
+    // Assign role (if admin, enforce secret passcode and max 3 admins limit)
     const assignedRole = role === 'admin' ? 'admin' : 'user';
 
-    const user = registerUser(name, email, password, assignedRole);
+    const user = registerUser(name, email, password, assignedRole, adminCode);
     const token = generateToken({ userId: user.id, email: user.email, role: user.role });
 
     return res.json({
@@ -150,6 +268,35 @@ apiRouter.post('/auth/login', (req: Request, res: Response) => {
     });
   } catch (error: any) {
     return res.status(500).json({ error: error?.message || 'Tizimga kirishda xatolik yuz berdi.' });
+  }
+});
+
+// Student Login / Register with Name (Student Name IS their password)
+apiRouter.post('/auth/student-login', (req: Request, res: Response) => {
+  try {
+    const { studentName } = req.body;
+    if (!studentName || !studentName.trim()) {
+      return res.status(400).json({ error: "Talaba ismi kiritilishi shart." });
+    }
+
+    const { user, token, isNew } = loginOrRegisterStudentByName(studentName);
+    return res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        createdAt: user.createdAt,
+      },
+      isNew,
+      message: isNew
+        ? `Xush kelibsiz, ${user.name}! Sizning ismingiz parolingiz sifatida saqlandi.`
+        : `Xush kelibsiz, ${user.name}!`,
+    });
+  } catch (error: any) {
+    return res.status(400).json({ error: error?.message || "Talaba kirishida xatolik yuz berdi." });
   }
 });
 
@@ -365,3 +512,152 @@ apiRouter.post('/evaluate-short-answer', async (req: Request, res: Response) => 
     });
   }
 });
+
+// --- Quiz Results Database Endpoints ---
+
+// Save student quiz attempt/result to persistent database
+apiRouter.post('/quizzes', (req: Request, res: Response) => {
+  try {
+    let studentUserId: string | undefined = undefined;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const decoded = verifyToken(authHeader.substring(7));
+      if (decoded) {
+        studentUserId = decoded.userId;
+      }
+    }
+
+    const {
+      id,
+      studentName,
+      bookTitle,
+      bookFileName,
+      date,
+      completedAt,
+      totalQuestions,
+      correctAnswers,
+      incorrectAnswers,
+      unansweredQuestions,
+      scorePercentage,
+      scoreLabel,
+      difficulty,
+      questionTypes,
+      questions,
+      timeTakenSeconds,
+    } = req.body;
+
+    let finalStudentName = studentName?.trim();
+    if (!finalStudentName && studentUserId) {
+      const user = findUserById(studentUserId);
+      finalStudentName = user?.name;
+    }
+    if (!finalStudentName) {
+      finalStudentName = 'Talaba';
+    }
+
+    // If student has a name and not logged in, auto-link or create student account
+    if (!studentUserId && finalStudentName && finalStudentName !== 'Talaba') {
+      try {
+        const studentAuth = loginOrRegisterStudentByName(finalStudentName);
+        studentUserId = studentAuth.user.id;
+      } catch (e) {
+        // Continue even if auto-auth fails
+      }
+    }
+
+    const record = saveQuizToDatabase({
+      id,
+      studentName: finalStudentName,
+      studentUserId,
+      bookTitle,
+      bookFileName,
+      date,
+      completedAt,
+      totalQuestions,
+      correctAnswers,
+      incorrectAnswers,
+      unansweredQuestions,
+      scorePercentage,
+      scoreLabel,
+      difficulty,
+      questionTypes,
+      questions,
+      timeTakenSeconds,
+    });
+
+    return res.json({
+      success: true,
+      data: record,
+      message: "Test natijasi ma'lumotlar bazasiga muvaffaqiyatli saqlandi.",
+    });
+  } catch (error: any) {
+    console.error('Error saving quiz result to DB:', error);
+    return res.status(500).json({
+      error: error?.message || 'Test natijasini bazaga saqlashda xatolik yuz berdi.',
+    });
+  }
+});
+
+// Get quiz results with filtering (all for admin, or by student)
+apiRouter.get('/quizzes', (req: Request, res: Response) => {
+  try {
+    const { studentName, studentUserId, search } = req.query;
+
+    const list = getQuizzesFromDatabase({
+      studentName: studentName ? String(studentName) : undefined,
+      studentUserId: studentUserId ? String(studentUserId) : undefined,
+      search: search ? String(search) : undefined,
+    });
+
+    return res.json({
+      success: true,
+      data: list,
+      total: list.length,
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      error: error?.message || 'Test natijalarini olishda xatolik yuz berdi.',
+    });
+  }
+});
+
+// Get single quiz result by ID
+apiRouter.get('/quizzes/:id', (req: Request, res: Response) => {
+  try {
+    const quiz = getQuizByIdFromDatabase(req.params.id);
+    if (!quiz) {
+      return res.status(404).json({ error: 'Test natijasi topilmadi.' });
+    }
+    return res.json({ success: true, data: quiz });
+  } catch (error: any) {
+    return res.status(500).json({
+      error: error?.message || 'Testni yuklashda xatolik.',
+    });
+  }
+});
+
+// Delete quiz result
+apiRouter.delete('/quizzes/:id', (req: Request, res: Response) => {
+  try {
+    const quiz = getQuizByIdFromDatabase(req.params.id);
+    if (!quiz) {
+      return res.status(404).json({ error: 'Test topilmadi.' });
+    }
+
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const decoded = verifyToken(authHeader.substring(7));
+      if (decoded && decoded.role !== 'admin' && quiz.studentUserId && quiz.studentUserId !== decoded.userId) {
+        return res.status(403).json({ error: "O'chirish uchun ruxsat yo'q." });
+      }
+    }
+
+    const deleted = deleteQuizFromDatabase(req.params.id);
+    return res.json({ success: deleted, message: "Test o'chirildi." });
+  } catch (error: any) {
+    return res.status(500).json({
+      error: error?.message || "O'chirishda xatolik yuz berdi.",
+    });
+  }
+});
+

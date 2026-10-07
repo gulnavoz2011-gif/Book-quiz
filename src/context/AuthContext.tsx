@@ -1,6 +1,20 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User } from '../types';
-import { apiLogin, apiRegister, apiGetMe } from '../utils/apiClient';
+import {
+  apiLogin,
+  apiRegister,
+  apiGetMe,
+  apiVerifyAdminCode,
+  apiGetAdminStatus,
+  apiStudentLogin,
+} from '../utils/apiClient';
+
+interface AdminStatusInfo {
+  adminCount: number;
+  maxAdmins: number;
+  availableSlots: number;
+  canRegisterAdmin: boolean;
+}
 
 interface AuthContextType {
   user: User | null;
@@ -8,8 +22,21 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isAdmin: boolean;
   isLoading: boolean;
+  adminPasscode: string | null;
+  isAdminVerified: boolean;
+  adminStatus: AdminStatusInfo | null;
   login: (email: string, password: string) => Promise<void>;
-  register: (name: string, email: string, password: string, role?: 'admin' | 'user') => Promise<void>;
+  studentLogin: (studentName: string) => Promise<void>;
+  register: (
+    name: string,
+    email: string,
+    password: string,
+    role?: 'admin' | 'user',
+    adminCode?: string
+  ) => Promise<void>;
+  verifyAdminPasscode: (code: string) => Promise<boolean>;
+  logoutAdminSession: () => void;
+  refreshAdminStatus: () => Promise<void>;
   logout: () => void;
   quickDemoLogin: (role: 'admin' | 'user') => Promise<void>;
   authModalOpen: boolean;
@@ -19,6 +46,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const TOKEN_STORAGE_KEY = 'bookquiz_auth_token';
+const ADMIN_PASSCODE_KEY = 'bookquiz_admin_passcode';
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [token, setToken] = useState<string | null>(() => {
@@ -27,6 +55,24 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
+  const [adminPasscode, setAdminPasscode] = useState<string | null>(() => {
+    return typeof window !== 'undefined' ? sessionStorage.getItem(ADMIN_PASSCODE_KEY) : null;
+  });
+  const [adminStatus, setAdminStatus] = useState<AdminStatusInfo | null>(null);
+
+  const refreshAdminStatus = async () => {
+    try {
+      const status = await apiGetAdminStatus();
+      setAdminStatus({
+        adminCount: status.adminCount,
+        maxAdmins: status.maxAdmins,
+        availableSlots: status.availableSlots,
+        canRegisterAdmin: status.canRegisterAdmin,
+      });
+    } catch (e) {
+      console.warn('Could not fetch admin status:', e);
+    }
+  };
 
   // Validate and load user from token on mount
   useEffect(() => {
@@ -44,6 +90,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           setUser(null);
         }
       }
+      await refreshAdminStatus();
       setIsLoading(false);
     };
 
@@ -56,25 +103,71 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setUser(res.user);
     localStorage.setItem(TOKEN_STORAGE_KEY, res.token);
     setAuthModalOpen(false);
+    await refreshAdminStatus();
+  };
+
+  const studentLogin = async (studentName: string) => {
+    const res = await apiStudentLogin(studentName);
+    setToken(res.token);
+    setUser(res.user);
+    localStorage.setItem(TOKEN_STORAGE_KEY, res.token);
+    setAuthModalOpen(false);
+    await refreshAdminStatus();
   };
 
   const register = async (
     name: string,
     email: string,
     password: string,
-    role: 'admin' | 'user' = 'user'
+    role: 'admin' | 'user' = 'user',
+    adminCode?: string
   ) => {
-    const res = await apiRegister(name, email, password, role);
+    const res = await apiRegister(name, email, password, role, adminCode);
     setToken(res.token);
     setUser(res.user);
     localStorage.setItem(TOKEN_STORAGE_KEY, res.token);
+    if (role === 'admin' && adminCode) {
+      setAdminPasscode(adminCode);
+      sessionStorage.setItem(ADMIN_PASSCODE_KEY, adminCode);
+    }
     setAuthModalOpen(false);
+    await refreshAdminStatus();
+  };
+
+  const verifyAdminPasscode = async (code: string): Promise<boolean> => {
+    try {
+      const result = await apiVerifyAdminCode(code);
+      if (result.verified) {
+        setAdminPasscode(code);
+        sessionStorage.setItem(ADMIN_PASSCODE_KEY, code);
+        if (result.token && result.user) {
+          setToken(result.token);
+          setUser(result.user);
+          localStorage.setItem(TOKEN_STORAGE_KEY, result.token);
+        }
+        await refreshAdminStatus();
+        return true;
+      }
+      return false;
+    } catch (err: any) {
+      throw err;
+    }
+  };
+
+  const logoutAdminSession = () => {
+    setAdminPasscode(null);
+    sessionStorage.removeItem(ADMIN_PASSCODE_KEY);
+    if (user?.role === 'admin') {
+      logout();
+    }
   };
 
   const logout = () => {
     localStorage.removeItem(TOKEN_STORAGE_KEY);
+    sessionStorage.removeItem(ADMIN_PASSCODE_KEY);
     setToken(null);
     setUser(null);
+    setAdminPasscode(null);
   };
 
   const quickDemoLogin = async (role: 'admin' | 'user') => {
@@ -87,6 +180,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const isAuthenticated = Boolean(user && token);
   const isAdmin = Boolean(user?.role === 'admin');
+  const isAdminVerified = Boolean(isAdmin && Boolean(adminPasscode));
 
   return (
     <AuthContext.Provider
@@ -96,8 +190,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         isAuthenticated,
         isAdmin,
         isLoading,
+        adminPasscode,
+        isAdminVerified,
+        adminStatus,
         login,
+        studentLogin,
         register,
+        verifyAdminPasscode,
+        logoutAdminSession,
+        refreshAdminStatus,
         logout,
         quickDemoLogin,
         authModalOpen,

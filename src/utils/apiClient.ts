@@ -1,4 +1,12 @@
-import { BookAnalysis, QuizQuestion, QuizSettingsConfig, LibraryBook, PaginatedBooksResponse, User } from '../types';
+import {
+  BookAnalysis,
+  QuizQuestion,
+  QuizSettingsConfig,
+  LibraryBook,
+  PaginatedBooksResponse,
+  User,
+  QuizResultRecord,
+} from '../types';
 
 export interface ApiAnalyzeResponse {
   success: boolean;
@@ -27,12 +35,13 @@ export async function apiRegister(
   name: string,
   email: string,
   password: string,
-  role: 'admin' | 'user' = 'user'
+  role: 'admin' | 'user' = 'user',
+  adminCode?: string
 ): Promise<{ token: string; user: User }> {
   const response = await fetch('/api/auth/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, email, password, role }),
+    body: JSON.stringify({ name, email, password, role, adminCode }),
   });
 
   const data = await response.json();
@@ -41,6 +50,90 @@ export async function apiRegister(
   }
 
   return { token: data.token, user: data.user };
+}
+
+export async function apiVerifyAdminCode(code: string): Promise<{
+  success: boolean;
+  verified: boolean;
+  token?: string;
+  user?: User;
+  adminCount: number;
+  maxAdmins: number;
+}> {
+  const response = await fetch('/api/auth/verify-admin-code', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+  });
+
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || "Maxfiy parol noto'g'ri! Faqat ruxsat etilgan maxfiy parol orqali kirish mumkin.");
+  }
+
+  return data;
+}
+
+export async function apiGetAdminsList(token: string): Promise<{
+  admins: { id: string; name: string; email: string; createdAt: string; role: string }[];
+  total: number;
+  maxAdmins: number;
+  availableSlots: number;
+}> {
+  const response = await fetch('/api/auth/admins', {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || 'Adminlar ro\'yxatini olishda xatolik.');
+  }
+
+  return data;
+}
+
+export async function apiRegisterNewAdmin(
+  payload: { name: string; email: string; password: string },
+  token: string
+): Promise<{ user: User; message: string }> {
+  const response = await fetch('/api/auth/admin-register', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || 'Yangi adminni ro\'yxatdan o\'tkazishda xatolik.');
+  }
+
+  return data;
+}
+
+export async function apiGetAdminStatus(): Promise<{
+  success: boolean;
+  adminCount: number;
+  maxAdmins: number;
+  availableSlots: number;
+  canRegisterAdmin: boolean;
+}> {
+  const response = await fetch('/api/auth/admin-status');
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    return {
+      success: false,
+      adminCount: 1,
+      maxAdmins: 3,
+      availableSlots: 2,
+      canRegisterAdmin: true,
+    };
+  }
+  return data;
 }
 
 export async function apiLogin(
@@ -59,6 +152,23 @@ export async function apiLogin(
   }
 
   return { token: data.token, user: data.user };
+}
+
+export async function apiStudentLogin(
+  studentName: string
+): Promise<{ token: string; user: User; isNew: boolean; message: string }> {
+  const response = await fetch('/api/auth/student-login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ studentName }),
+  });
+
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || 'Talaba kirishida xatolik.');
+  }
+
+  return { token: data.token, user: data.user, isNew: data.isNew, message: data.message };
 }
 
 export async function apiGetMe(token: string): Promise<User> {
@@ -116,13 +226,16 @@ export async function fetchDistinctGenres(): Promise<string[]> {
 
 export async function createLibraryBook(
   bookData: Omit<LibraryBook, 'id' | 'createdAt'>,
-  token: string
+  token: string,
+  adminCode?: string
 ): Promise<LibraryBook> {
+  const code = adminCode || (typeof window !== 'undefined' ? sessionStorage.getItem('bookquiz_admin_passcode') : null) || '';
   const response = await fetch('/api/books', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
+      'x-admin-code': code,
     },
     body: JSON.stringify(bookData),
   });
@@ -137,13 +250,16 @@ export async function createLibraryBook(
 export async function updateLibraryBook(
   id: string,
   bookData: Partial<LibraryBook>,
-  token: string
+  token: string,
+  adminCode?: string
 ): Promise<LibraryBook> {
+  const code = adminCode || (typeof window !== 'undefined' ? sessionStorage.getItem('bookquiz_admin_passcode') : null) || '';
   const response = await fetch(`/api/books/${id}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
+      'x-admin-code': code,
     },
     body: JSON.stringify(bookData),
   });
@@ -155,11 +271,17 @@ export async function updateLibraryBook(
   return data.data;
 }
 
-export async function deleteLibraryBook(id: string, token: string): Promise<void> {
+export async function deleteLibraryBook(
+  id: string,
+  token: string,
+  adminCode?: string
+): Promise<void> {
+  const code = adminCode || (typeof window !== 'undefined' ? sessionStorage.getItem('bookquiz_admin_passcode') : null) || '';
   const response = await fetch(`/api/books/${id}`, {
     method: 'DELETE',
     headers: {
       Authorization: `Bearer ${token}`,
+      'x-admin-code': code,
     },
   });
 
@@ -252,3 +374,84 @@ export async function requestEvaluateShortAnswer(
     feedback: isMatch ? "Javob kitobdagi asosiy faktlarni to'g'ri ifodalagan." : "Javob kitobdagi ma'lumotlar bilan mos kelmadi.",
   };
 }
+
+// --- Quiz Database Persistence APIs ---
+
+export async function apiSaveQuizToDatabase(
+  quiz: QuizResultRecord,
+  token?: string | null
+): Promise<QuizResultRecord> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch('/api/quizzes', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(quiz),
+  });
+
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || 'Test natijasini bazaga saqlab bo\'lmadi.');
+  }
+
+  return data.data;
+}
+
+export async function apiGetQuizzesFromDatabase(params?: {
+  studentName?: string;
+  studentUserId?: string;
+  search?: string;
+  token?: string | null;
+}): Promise<QuizResultRecord[]> {
+  const query = new URLSearchParams();
+  if (params?.studentName) query.set('studentName', params.studentName);
+  if (params?.studentUserId) query.set('studentUserId', params.studentUserId);
+  if (params?.search) query.set('search', params.search);
+
+  const headers: Record<string, string> = {};
+  if (params?.token) {
+    headers['Authorization'] = `Bearer ${params.token}`;
+  }
+
+  const response = await fetch(`/api/quizzes?${query.toString()}`, { headers });
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || 'Testlarni yuklab bo\'lmadi.');
+  }
+
+  return data.data;
+}
+
+export async function apiGetQuizByIdFromDatabase(id: string): Promise<QuizResultRecord> {
+  const response = await fetch(`/api/quizzes/${id}`);
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || 'Test topilmadi.');
+  }
+  return data.data;
+}
+
+export async function apiDeleteQuizFromDatabase(id: string, token?: string | null): Promise<boolean> {
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`/api/quizzes/${id}`, {
+    method: 'DELETE',
+    headers,
+  });
+
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || 'Testni o\'chirib bo\'lmadi.');
+  }
+
+  return true;
+}
+

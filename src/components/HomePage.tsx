@@ -84,6 +84,16 @@ export const HomePage: React.FC<HomePageProps> = ({ onBookReady }) => {
       return;
     }
 
+    const MAX_500MB = 500 * 1024 * 1024;
+    if (file.size > MAX_500MB) {
+      setErrorMessage(
+        language === 'uz'
+          ? "Fayl hajmi 500 MB dan katta. Iltimos, 500 MB gacha bo'lgan PDF kitob yuklang."
+          : "File size exceeds 500 MB limit. Please upload a PDF under 500 MB."
+      );
+      return;
+    }
+
     setIsProcessing(true);
     try {
       const extracted = await extractTextFromPdf(file, (p) => {
