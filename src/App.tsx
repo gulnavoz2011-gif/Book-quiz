@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck } from 'lucide-react';
+import { ShieldCheck, Play, Activity, X } from 'lucide-react';
 import { Header } from './components/Header';
 import { HomePage } from './components/HomePage';
 import { QuizSettingsView } from './components/QuizSettingsView';
@@ -22,6 +22,8 @@ import {
   QuizResultRecord,
   QuizProgressState,
   LibraryBook,
+  ActiveQuizSession,
+  ProvisionalQuizStats,
 } from './types';
 import {
   getSavedQuizzes,
@@ -36,7 +38,15 @@ import {
   requestEvaluateShortAnswer,
   apiSaveQuizToDatabase,
   apiGetQuizzesFromDatabase,
+  apiAutoSaveBookToLibrary,
 } from './utils/apiClient';
+import {
+  loadActiveQuizSession,
+  saveActiveQuizSession,
+  clearActiveQuizSession,
+  calculateProvisionalQuizStats,
+  buildProvisionalRecord,
+} from './utils/quizTracking';
 import { useLanguage } from './context/LanguageContext';
 import { useAuth } from './context/AuthContext';
 
@@ -67,6 +77,39 @@ export default function App() {
   // Persistent History & Dashboard
   const [savedQuizzes, setSavedQuizzes] = useState<QuizResultRecord[]>([]);
 
+  // Active Unfinished Quiz Session Notice
+  const [activeSessionNotice, setActiveSessionNotice] = useState<ActiveQuizSession | null>(null);
+
+  useEffect(() => {
+    // Check if an active unfinished quiz session exists on app load
+    const savedSession = loadActiveQuizSession();
+    if (savedSession && savedSession.book && savedSession.questions?.length > 0) {
+      setActiveSessionNotice(savedSession);
+    }
+  }, []);
+
+  const handleResumeActiveQuiz = (sessionToResume?: ActiveQuizSession) => {
+    const session = sessionToResume || activeSessionNotice || loadActiveQuizSession();
+    if (!session) return;
+    setActiveBook(session.book);
+    setActiveQuestions(session.questions);
+    setActiveConfig(
+      session.config || {
+        numberOfQuestions: session.questions.length,
+        difficulty: 'medium',
+        questionTypes: ['multiple_choice'],
+      }
+    );
+    setQuizStartTime(session.startTime || Date.now());
+    setCurrentView('quiz_active');
+    setActiveSessionNotice(null);
+  };
+
+  const handleDiscardActiveQuiz = () => {
+    clearActiveQuizSession();
+    setActiveSessionNotice(null);
+  };
+
   useEffect(() => {
     const localQuizzes = getSavedQuizzes();
     setSavedQuizzes(localQuizzes);
@@ -94,10 +137,28 @@ export default function App() {
     syncFromDb();
   }, [user, token]);
 
-  // 1. When a book is uploaded or sample book selected
+  // 1. When a book is uploaded or sample book selected: auto-save directly to library without duplicates
   const handleBookReady = (book: UploadedBook) => {
     setActiveBook(book);
     setCurrentView('quiz_settings');
+
+    // Auto-save directly into the library catalog ("test yaratish uchun berilgan kitoblarni togridan togri kutubxonaga saqlagin . bitta kitobni ikki mara saqlama")
+    apiAutoSaveBookToLibrary(
+      {
+        title: book.analysis?.title || book.fileName.replace(/\.pdf$/i, ''),
+        author: book.analysis?.detectedAuthor || "Noma'lum muallif",
+        genre: 'Talaba kutubxonasi',
+        description: book.analysis?.summary || `Test yaratish uchun taqdim etilgan kitob (${book.fileName}).`,
+        fileSize: book.fileSize,
+        pagesCount: book.numPages,
+        fullText: book.fullText,
+        pdfUrl: book.pdfUrl,
+        uploadedBy: user?.name || 'Talaba',
+      },
+      token
+    ).catch((err) => {
+      console.warn('Auto-saving book to library failed (non-blocking):', err);
+    });
   };
 
   // 1b. When a user chooses to read a book from the Library or Admin
@@ -118,6 +179,7 @@ export default function App() {
       fullText:
         book.fullText ||
         `${book.title} - ${book.author}.\nJanr: ${book.genre}.\nTavsif: ${book.description}`,
+      pdfUrl: book.pdfUrl,
       analysis: book.analysis || null,
       uploadedAt: book.createdAt,
     };
@@ -138,6 +200,24 @@ export default function App() {
       if (!currentAnalysis) {
         currentAnalysis = await requestBookAnalysis(activeBook.fullText, activeBook.fileName);
         setActiveBook((prev) => (prev ? { ...prev, analysis: currentAnalysis } : null));
+
+        // Auto-save rich analyzed details to library without duplicating
+        apiAutoSaveBookToLibrary(
+          {
+            title: currentAnalysis.title || activeBook.fileName.replace(/\.pdf$/i, ''),
+            author: currentAnalysis.detectedAuthor || "Noma'lum muallif",
+            genre: 'Talaba kutubxonasi',
+            description: currentAnalysis.summary || `Talaba tomonidan test yaratish uchun yuklangan kitob.`,
+            fileSize: activeBook.fileSize,
+            pagesCount: activeBook.numPages,
+            fullText: activeBook.fullText,
+            pdfUrl: activeBook.pdfUrl,
+            uploadedBy: user?.name || 'Talaba',
+          },
+          token
+        ).catch((err) => {
+          console.warn('Auto-saving analyzed book to library failed:', err);
+        });
       }
 
       // Step B: Generate questions based on book text & user settings
@@ -152,12 +232,28 @@ export default function App() {
       }
 
       setActiveQuestions(questions);
-      setQuizStartTime(Date.now());
+      const nowTime = Date.now();
+      setQuizStartTime(nowTime);
       setQuizProgress({
         currentIndex: 0,
         totalQuestions: questions.length,
         answeredCount: 0,
       });
+
+      // Save initial active session for real-time tracking and persistence across tabs/refresh
+      saveActiveQuizSession({
+        book: activeBook,
+        questions,
+        config,
+        currentIndex: 0,
+        answers: {},
+        tabSwitchCount: 0,
+        startTime: nowTime,
+        lastActiveTime: nowTime,
+        stats: calculateProvisionalQuizStats(questions, {}, 0, 'session_start'),
+        isProvisional: true,
+      });
+      setActiveSessionNotice(null);
       setCurrentView('quiz_active');
     } catch (err: any) {
       console.error('Generation failure:', err);
@@ -262,6 +358,10 @@ export default function App() {
         }
       }
 
+      // Clear provisional active session since quiz is completed and submitted
+      clearActiveQuizSession();
+      setActiveSessionNotice(null);
+
       setCurrentView('quiz_results');
     } catch (err: any) {
       console.error('Quiz evaluation error:', err);
@@ -324,6 +424,57 @@ export default function App() {
         quizProgress={quizProgress}
       />
 
+      {/* Persistent Unfinished Quiz Session Banner */}
+      {activeSessionNotice && currentView !== 'quiz_active' && (
+        <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white shadow-md border-b border-blue-500/30">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-blue-500/20 text-blue-300 flex items-center justify-center flex-shrink-0 border border-blue-400/30">
+                <Activity className="w-4 h-4 animate-pulse" />
+              </div>
+              <div className="min-w-0">
+                <span className="font-bold text-white text-xs sm:text-sm block truncate">
+                  {language === 'uz' ? 'Davom ettirilmagan test mavjud:' : 'Unfinished quiz available:'}{' '}
+                  <span className="text-blue-300 font-normal">
+                    {activeSessionNotice.book.fileName.replace(/\.pdf$/i, '')}
+                  </span>
+                </span>
+                <span className="text-slate-300 text-[11px]">
+                  {activeSessionNotice.stats?.answeredQuestions || 0} / {activeSessionNotice.questions.length}{' '}
+                  {language === 'uz' ? 'ta savol belgilangan' : 'answered'} (
+                  {activeSessionNotice.stats?.completionPercentage || 0}%) •{' '}
+                  {language === 'uz' ? 'Aniqlik:' : 'Accuracy:'}{' '}
+                  {activeSessionNotice.stats?.accuracyPercentage || 0}% •{' '}
+                  {language === 'uz' ? 'Tab almashishlar:' : 'Tab switches:'}{' '}
+                  {activeSessionNotice.tabSwitchCount || 0}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                type="button"
+                id="btn-resume-saved-quiz"
+                onClick={() => handleResumeActiveQuiz()}
+                className="px-3.5 py-1.5 rounded-xl bg-blue-500 hover:bg-blue-400 text-white font-bold transition-all flex items-center gap-1.5 shadow-xs"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>{language === 'uz' ? 'Testni davom ettirish' : 'Resume Quiz'}</span>
+              </button>
+              <button
+                type="button"
+                id="btn-discard-saved-quiz"
+                onClick={handleDiscardActiveQuiz}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                title={language === 'uz' ? 'Bekor qilish' : 'Dismiss'}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main View Area */}
       <main className="flex-1 pb-16">
         {/* 1. Home View */}
@@ -381,9 +532,45 @@ export default function App() {
           <QuizView
             book={activeBook}
             questions={activeQuestions}
+            config={activeConfig || undefined}
+            initialAnswers={
+              loadActiveQuizSession()?.book?.id === activeBook.id
+                ? loadActiveQuizSession()?.answers
+                : undefined
+            }
+            initialIndex={
+              loadActiveQuizSession()?.book?.id === activeBook.id
+                ? loadActiveQuizSession()?.currentIndex
+                : 0
+            }
+            initialTabSwitches={
+              loadActiveQuizSession()?.book?.id === activeBook.id
+                ? loadActiveQuizSession()?.tabSwitchCount
+                : 0
+            }
+            startTime={quizStartTime || undefined}
             onSubmit={handleQuizSubmit}
-            onExit={() => setCurrentView('home')}
+            onExit={() => {
+              const active = loadActiveQuizSession();
+              if (active) setActiveSessionNotice(active);
+              setCurrentView('home');
+            }}
             onProgressChange={setQuizProgress}
+            onProvisionalSave={(stats, answers) => {
+              if (activeBook) {
+                const provisionalRecord = buildProvisionalRecord(
+                  activeBook,
+                  activeQuestions,
+                  answers,
+                  stats,
+                  activeConfig || undefined,
+                  user?.name || 'Talaba',
+                  user?.id,
+                  quizStartTime || Date.now()
+                );
+                apiSaveQuizToDatabase(provisionalRecord, token).catch(() => {});
+              }
+            }}
           />
         )}
 
@@ -447,6 +634,8 @@ export default function App() {
             onSelectQuiz={handleOpenSavedQuiz}
             onNewQuiz={handleStartNewQuiz}
             onViewAllHistory={() => setCurrentView('my_quizzes')}
+            onReadBook={handleReadBook}
+            onTakeQuiz={handleTakeQuizFromLibrary}
           />
         )}
       </main>

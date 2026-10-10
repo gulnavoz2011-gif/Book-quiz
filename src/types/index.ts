@@ -20,6 +20,7 @@ export interface UploadedBook {
   wordCount: number;
   charCount: number;
   fullText: string;
+  pdfUrl?: string;
   analysis: BookAnalysis | null;
   uploadedAt: string;
   isSample?: boolean;
@@ -65,6 +66,37 @@ export interface QuizResultRecord {
   questions: QuizQuestion[];
   timeTakenSeconds?: number;
   config?: QuizSettingsConfig;
+  isProvisional?: boolean;
+  completionPercentage?: number;
+  accuracyPercentage?: number;
+  tabSwitchCount?: number;
+  lastActivityAt?: string;
+}
+
+export interface ProvisionalQuizStats {
+  totalQuestions: number;
+  answeredQuestions: number;
+  correctAnswers: number;
+  incorrectAnswers: number;
+  unansweredQuestions: number;
+  completionPercentage: number;
+  accuracyPercentage: number;
+  tabSwitchCount: number;
+  lastUpdated: string;
+  lastEventReason?: string;
+}
+
+export interface ActiveQuizSession {
+  book: UploadedBook;
+  questions: QuizQuestion[];
+  config?: QuizSettingsConfig;
+  currentIndex: number;
+  answers: Record<string, string>;
+  tabSwitchCount: number;
+  startTime: number;
+  lastActiveTime: number;
+  stats: ProvisionalQuizStats;
+  isProvisional: boolean;
 }
 
 export interface StudentDashboardStats {
@@ -78,6 +110,7 @@ export interface QuizProgressState {
   currentIndex: number;
   totalQuestions: number;
   answeredCount: number;
+  provisionalStats?: ProvisionalQuizStats;
 }
 
 export interface User {

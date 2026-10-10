@@ -55,6 +55,10 @@ export interface QuizResultDatabaseRecord {
   questions: any[];
   timeTakenSeconds?: number;
   createdAt: string;
+  isProvisional?: boolean;
+  completionPercentage?: number;
+  accuracyPercentage?: number;
+  tabSwitchCount?: number;
 }
 
 interface DatabaseSchema {
@@ -446,6 +450,161 @@ export function createBook(data: Omit<BookRecord, 'id' | 'createdAt'>): BookReco
   return newBook;
 }
 
+export function normalizeBookTitle(title: string): string {
+  return (title || '')
+    .toLowerCase()
+    .replace(/\.pdf$/i, '')
+    .replace(/[_\-]+/g, ' ')
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Saves a book into the library catalog with strict deduplication ("bitta kitobni ikki marta saqlama").
+ * If the book already exists by title, filename or content snippet, returns existing book without duplicating.
+ */
+export function saveBookDeduped(data: {
+  title: string;
+  author?: string;
+  genre?: string;
+  description?: string;
+  coverImage?: string;
+  pdfUrl?: string;
+  fileSize?: number;
+  pagesCount?: number;
+  fullText?: string;
+  uploadedBy?: string;
+}): { book: BookRecord; isNew: boolean } {
+  const db = loadDatabase();
+  const rawTitle = (data.title || '').trim();
+  const normalizedTitle = normalizeBookTitle(rawTitle);
+
+  if (!rawTitle) {
+    throw new Error("Kitob nomi ko'rsatilishi shart.");
+  }
+
+  // Check if book already exists in library (deduplicate)
+  const existingIndex = db.books.findIndex((b) => {
+    const existingNorm = normalizeBookTitle(b.title);
+    if (existingNorm && existingNorm === normalizedTitle) return true;
+
+    // Check exact title match ignoring case
+    if (b.title.trim().toLowerCase() === rawTitle.toLowerCase()) return true;
+
+    // Check filename without extension match
+    const bTitleBase = b.title.toLowerCase().replace(/\.pdf$/i, '').trim();
+    const rawTitleBase = rawTitle.toLowerCase().replace(/\.pdf$/i, '').trim();
+    if (bTitleBase && rawTitleBase && bTitleBase === rawTitleBase) return true;
+
+    // Check content identity if both have substantial fullText
+    if (
+      b.fullText &&
+      data.fullText &&
+      b.fullText.length > 150 &&
+      data.fullText.length > 150
+    ) {
+      const bSnippet = b.fullText.slice(0, 200).replace(/\s+/g, ' ').trim();
+      const newSnippet = data.fullText.slice(0, 200).replace(/\s+/g, ' ').trim();
+      if (bSnippet === newSnippet) return true;
+    }
+
+    return false;
+  });
+
+  if (existingIndex !== -1) {
+    // Book is already in library! Do not save twice.
+    const existing = db.books[existingIndex];
+    let updated = false;
+
+    // Supplement or upgrade to original uploaded PDF file
+    if (data.pdfUrl && existing.pdfUrl !== data.pdfUrl) {
+      existing.pdfUrl = data.pdfUrl;
+      updated = true;
+    }
+    if ((!existing.fullText || existing.fullText.length < 100) && data.fullText) {
+      existing.fullText = data.fullText;
+      updated = true;
+    }
+    if ((!existing.description || existing.description.length < 20) && data.description) {
+      existing.description = data.description;
+      updated = true;
+    }
+    if ((!existing.author || existing.author === "Noma'lum" || existing.author === "Noma'lum muallif") && data.author) {
+      existing.author = data.author;
+      updated = true;
+    }
+    if (data.fileSize && (!existing.fileSize || existing.fileSize < data.fileSize)) {
+      existing.fileSize = data.fileSize;
+      updated = true;
+    }
+    if (data.pagesCount && (!existing.pagesCount || existing.pagesCount < data.pagesCount)) {
+      existing.pagesCount = data.pagesCount;
+      updated = true;
+    }
+
+    if (updated) {
+      saveDatabase(db);
+    }
+    return { book: existing, isNew: false };
+  }
+
+  // Not a duplicate: pick a tailored cover image if not provided
+  let cover = data.coverImage;
+  if (!cover || !cover.startsWith('http')) {
+    const g = (data.genre || '').toLowerCase();
+    if (g.includes('badiiy') || g.includes('adabiyot')) {
+      cover = 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=600&q=80';
+    } else if (g.includes('falsafa') || g.includes('psixologiya')) {
+      cover = 'https://images.unsplash.com/photo-1512820790803-83ca734da794?auto=format&fit=crop&w=600&q=80';
+    } else if (g.includes('biznes') || g.includes('moliya') || g.includes('iqtisod')) {
+      cover = 'https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&w=600&q=80';
+    } else if (g.includes('it') || g.includes('dastur') || g.includes('texnologiya')) {
+      cover = 'https://images.unsplash.com/photo-1555066931-4365d14bab8c?auto=format&fit=crop&w=600&q=80';
+    } else if (g.includes('tarix') || g.includes('biografiya')) {
+      cover = 'https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=600&q=80';
+    } else {
+      cover = 'https://images.unsplash.com/photo-1497633762265-9d179a990aa6?auto=format&fit=crop&w=600&q=80';
+    }
+  }
+
+  // Ensure readable multi-page PDF Data URL exists for the reader
+  let pdfUrl = data.pdfUrl || '';
+  if (!pdfUrl) {
+    const text = data.fullText || `${rawTitle}\nMuallif: ${data.author || "Noma'lum"}`;
+    const chunkSize = 600;
+    const pages: string[] = [];
+    for (let i = 0; i < text.length; i += chunkSize) {
+      pages.push(text.slice(i, i + chunkSize));
+      if (pages.length >= 10) break;
+    }
+    pdfUrl = generateSimplePdfDataUrl(
+      rawTitle,
+      data.author || "Noma'lum muallif",
+      pages.length > 0 ? pages : [text]
+    );
+  }
+
+  const newBook: BookRecord = {
+    id: `book_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    title: rawTitle,
+    author: data.author ? data.author.trim() : "Noma'lum muallif",
+    genre: data.genre ? data.genre.trim() : 'Talaba kutubxonasi',
+    description: data.description ? data.description.trim() : 'Test yaratish uchun taqdim etilgan kitob.',
+    coverImage: cover,
+    pdfUrl,
+    fileSize: Number(data.fileSize) || 1024 * 100,
+    pagesCount: Number(data.pagesCount) || 1,
+    fullText: data.fullText ? String(data.fullText) : '',
+    uploadedBy: data.uploadedBy || 'Talaba',
+    createdAt: new Date().toISOString(),
+  };
+
+  db.books.unshift(newBook);
+  saveDatabase(db);
+  return { book: newBook, isNew: true };
+}
+
 export function updateBook(id: string, updates: Partial<Omit<BookRecord, 'id' | 'createdAt'>>): BookRecord {
   const db = loadDatabase();
   const index = db.books.findIndex((b) => b.id === id);
@@ -566,6 +725,10 @@ export function saveQuizToDatabase(quizData: Partial<QuizResultDatabaseRecord>):
     questions: quizData.questions || [],
     timeTakenSeconds: Number(quizData.timeTakenSeconds) || 0,
     createdAt: now,
+    isProvisional: Boolean(quizData.isProvisional),
+    completionPercentage: Number(quizData.completionPercentage) || 0,
+    accuracyPercentage: Number(quizData.accuracyPercentage) || 0,
+    tabSwitchCount: Number(quizData.tabSwitchCount) || 0,
   };
 
   if (existingIdx !== -1) {

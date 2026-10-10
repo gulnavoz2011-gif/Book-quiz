@@ -48,8 +48,9 @@ export const PdfReaderView: React.FC<PdfReaderViewProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [pageInputVal, setPageInputVal] = useState<string>('1');
+  const [displayMode, setDisplayMode] = useState<'canvas' | 'native'>('canvas');
 
-  // Load PDF Document (supports large books up to 500 MB with progress tracking)
+  // Load exact PDF Document without changing anything ("qanday tashlangan bo'lsa shunday ko'rsat")
   useEffect(() => {
     let isCancelled = false;
     setIsLoading(true);
@@ -59,7 +60,11 @@ export const PdfReaderView: React.FC<PdfReaderViewProps> = ({
     async function loadPdf() {
       try {
         if (!book.pdfUrl) {
-          throw new Error('PDF fayli mavjud emas.');
+          throw new Error(
+            language === 'uz'
+              ? 'PDF fayli manzili mavjud emas.'
+              : 'PDF file URL is missing.'
+          );
         }
 
         const loadingTask = pdfjsLib.getDocument({
@@ -67,7 +72,7 @@ export const PdfReaderView: React.FC<PdfReaderViewProps> = ({
           useSystemFonts: true,
           disableAutoFetch: false,
           disableStream: false,
-          rangeChunkSize: 65536 * 16, // 1MB chunks for huge files up to 500 MB
+          rangeChunkSize: 65536 * 16, // 1MB chunks for large files up to 500 MB
         });
 
         loadingTask.onProgress = (progressData: { loaded: number; total: number }) => {
@@ -316,6 +321,26 @@ export const PdfReaderView: React.FC<PdfReaderViewProps> = ({
             </button>
           </div>
 
+          {/* Asl PDF (Brauzer) / Canvas toggle */}
+          {book.pdfUrl && (
+            <button
+              onClick={() => setDisplayMode((prev) => (prev === 'canvas' ? 'native' : 'canvas'))}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                displayMode === 'native'
+                  ? 'bg-blue-600 border-blue-500 text-white'
+                  : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300'
+              }`}
+              title={language === 'uz' ? "Asl PDF varianti (Brauzer o'quvchisi)" : "Original PDF native reader"}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">
+                {displayMode === 'native'
+                  ? (language === 'uz' ? "Sahifama-sahifa ko'rinish" : "Page-by-page View")
+                  : (language === 'uz' ? "Asl PDF (Brauzer)" : "Native PDF")}
+              </span>
+            </button>
+          )}
+
           <button
             onClick={toggleFullscreen}
             className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs hidden sm:block"
@@ -327,7 +352,7 @@ export const PdfReaderView: React.FC<PdfReaderViewProps> = ({
           {/* Create Quiz Action */}
           <button
             onClick={() => onStartQuiz(book)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-semibold shadow-md transition-all"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-semibold shadow-md transition-all cursor-pointer"
           >
             <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
             <span>{t.reader.createQuiz}</span>
@@ -366,10 +391,17 @@ export const PdfReaderView: React.FC<PdfReaderViewProps> = ({
             <h3 className="text-base font-bold text-white mb-2">{t.reader.errorLoading}</h3>
             <p className="text-xs text-slate-400 mb-4">{errorMessage}</p>
 
-            {book.fullText && (
-              <div className="text-left bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs text-slate-300 max-h-60 overflow-y-auto mb-4 font-mono leading-relaxed">
-                <p className="font-semibold text-blue-400 mb-2">Matn ko'rinishi:</p>
-                {book.fullText}
+            {book.pdfUrl && (
+              <div className="mb-4">
+                <a
+                  href={book.pdfUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>{language === 'uz' ? "Asl PDF faylini to'g'ridan-to'g'ri ochish" : "Open Original PDF Directly"}</span>
+                </a>
               </div>
             )}
 
@@ -390,11 +422,21 @@ export const PdfReaderView: React.FC<PdfReaderViewProps> = ({
           </div>
         )}
 
-        <div className={`transition-opacity duration-200 ${isLoading || errorMessage ? 'hidden' : 'block'}`}>
-          <div className="bg-white rounded-lg shadow-2xl overflow-hidden border border-slate-300">
-            <canvas ref={canvasRef} className="block mx-auto" />
+        {displayMode === 'native' && book.pdfUrl ? (
+          <div className="w-full h-[calc(100vh-170px)] bg-slate-900 rounded-xl overflow-hidden shadow-2xl border border-slate-800">
+            <iframe
+              src={`${book.pdfUrl}#page=${currentPage}`}
+              className="w-full h-full border-0 rounded-xl"
+              title={book.title}
+            />
           </div>
-        </div>
+        ) : (
+          <div className={`transition-opacity duration-200 ${isLoading || errorMessage ? 'hidden' : 'block'}`}>
+            <div className="bg-white rounded-lg shadow-2xl overflow-hidden border border-slate-300">
+              <canvas ref={canvasRef} className="block mx-auto" />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Bottom Floating Navigation (Mobile friendly) */}

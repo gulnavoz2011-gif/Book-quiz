@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   LayoutDashboard,
   Award,
@@ -11,10 +11,14 @@ import {
   Calendar,
   Sparkles,
   HardDrive,
+  Eye,
+  Zap,
 } from 'lucide-react';
-import { QuizResultRecord, StudentDashboardStats } from '../types';
+import { QuizResultRecord, StudentDashboardStats, LibraryBook } from '../types';
 import { useLanguage } from '../context/LanguageContext';
 import { getScoreLabel } from '../utils/storage';
+import { fetchLibraryBooks } from '../utils/apiClient';
+import { formatFileSize } from '../utils/pdfExtractor';
 
 interface DashboardViewProps {
   stats: StudentDashboardStats;
@@ -22,6 +26,8 @@ interface DashboardViewProps {
   onSelectQuiz: (quiz: QuizResultRecord) => void;
   onNewQuiz: () => void;
   onViewAllHistory: () => void;
+  onReadBook?: (book: LibraryBook) => void;
+  onTakeQuiz?: (book: LibraryBook) => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -30,8 +36,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onSelectQuiz,
   onNewQuiz,
   onViewAllHistory,
+  onReadBook,
+  onTakeQuiz,
 }) => {
   const { t, language } = useLanguage();
+  const [readingBooks, setReadingBooks] = useState<LibraryBook[]>([]);
+  const [isLoadingBooks, setIsLoadingBooks] = useState(false);
+
+  useEffect(() => {
+    setIsLoadingBooks(true);
+    fetchLibraryBooks({ limit: 4 })
+      .then((res) => {
+        if (res && res.books) {
+          setReadingBooks(res.books);
+        }
+      })
+      .catch((err) => console.warn('Could not load books for student dashboard:', err))
+      .finally(() => setIsLoadingBooks(false));
+  }, []);
 
   const getDifficultyLabel = (diff: string) => {
     if (diff === 'easy') return t.config.difficultyEasy;
@@ -160,6 +182,99 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <p className="text-[11px] text-slate-400 mt-1">{t.dashboard.personalRecord}</p>
         </div>
+      </div>
+
+      {/* Student Book Reading Section (500 MB Capacity) */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs mb-8">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <BookOpen className="w-5 h-5 text-indigo-600" />
+              <h2 className="font-heading text-lg font-bold text-slate-900">
+                {language === 'uz' ? "Talaba mutolaa zali & Kitob o'qish" : "Student Reading Hall & Books"}
+              </h2>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700 border border-blue-200">
+                500 MB gacha
+              </span>
+            </div>
+            <p className="text-xs text-slate-500">
+              {language === 'uz'
+                ? "Talabalar 500 MB gacha bo'lgan kitob va darsliklarni to'g'ridan-to'g'ri o'qishlari hamda ular bo'yicha sun'iy intellekt testlarini topshirishlari mumkin."
+                : "Students can read books and textbooks up to 500 MB directly or take instant AI quizzes."}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onNewQuiz}
+              className="px-3.5 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <PlusCircle className="w-3.5 h-3.5" />
+              <span>{language === 'uz' ? "Yangi kitob yuklash (500 MB)" : "Upload 500 MB Book"}</span>
+            </button>
+          </div>
+        </div>
+
+        {isLoadingBooks ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="animate-pulse bg-slate-50 rounded-xl p-4 h-36 border border-slate-100" />
+            ))}
+          </div>
+        ) : readingBooks.length > 0 ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {readingBooks.map((book) => (
+              <div
+                key={book.id}
+                className="bg-slate-50/70 hover:bg-white rounded-xl border border-slate-200 p-4 flex flex-col justify-between transition-all hover:shadow-sm hover:border-blue-300 group"
+              >
+                <div>
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <span className="px-2 py-0.5 text-[10px] font-semibold bg-white border border-slate-200 rounded-md text-slate-600 truncate max-w-[120px]">
+                      {book.genre}
+                    </span>
+                    <span className="text-[10px] font-mono text-blue-600 font-medium">
+                      {formatFileSize(book.fileSize)}
+                    </span>
+                  </div>
+
+                  <h4 className="font-bold text-xs text-slate-900 line-clamp-1 mb-1 group-hover:text-blue-600 transition-colors">
+                    {book.title}
+                  </h4>
+                  <p className="text-[11px] text-slate-500 line-clamp-1 mb-3">
+                    {book.author}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-1.5 pt-2 border-t border-slate-200/60">
+                  {onReadBook && (
+                    <button
+                      onClick={() => onReadBook(book)}
+                      className="flex-1 py-1.5 px-2 rounded-lg bg-white hover:bg-blue-600 hover:text-white text-slate-700 text-[11px] font-semibold border border-slate-200 transition-all flex items-center justify-center gap-1 shadow-2xs cursor-pointer"
+                    >
+                      <BookOpen className="w-3 h-3 text-blue-500 group-hover:text-white" />
+                      <span>{t.library.readBook}</span>
+                    </button>
+                  )}
+                  {onTakeQuiz && (
+                    <button
+                      onClick={() => onTakeQuiz(book)}
+                      className="py-1.5 px-2 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 text-[11px] font-semibold border border-blue-200 transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                      title={t.library.takeQuiz}
+                    >
+                      <Sparkles className="w-3 h-3 text-yellow-500" />
+                      <span>Test</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-center py-6 text-slate-400 text-xs">
+            {language === 'uz' ? "Kutubxonada kitoblar mavjud emas." : "No books available."}
+          </div>
+        )}
       </div>
 
       {/* Recent Quizzes List */}

@@ -15,6 +15,7 @@ import {
   queryBooks,
   getBookById,
   createBook,
+  saveBookDeduped,
   updateBook,
   deleteBook,
   getDistinctGenres,
@@ -30,11 +31,63 @@ import {
   deleteQuizFromDatabase,
 } from './db';
 
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const UPLOADS_DIR = path.join(__dirname, 'data', 'uploads');
+if (!fs.existsSync(UPLOADS_DIR)) {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+
 export const apiRouter = express.Router();
 
 // 500MB payload limit for large book texts, cover images and PDF data
 apiRouter.use(express.json({ limit: '500mb' }));
 apiRouter.use(express.urlencoded({ limit: '500mb', extended: true }));
+
+// Endpoint to store original PDF files without alteration ("qanday tashlangan bo'lsa shunday ko'rsat")
+apiRouter.post(
+  '/upload-pdf',
+  express.raw({ type: ['application/pdf', 'application/octet-stream'], limit: '500mb' }),
+  (req: Request, res: Response) => {
+    try {
+      const rawHeaderName = req.headers['x-file-name'] as string | undefined;
+      const fileName = rawHeaderName ? decodeURIComponent(rawHeaderName) : `Kitob_${Date.now()}.pdf`;
+      const cleanFileName = fileName.replace(/[^a-zA-Z0-9._\-\u0400-\u04FF]/g, '_');
+      const safeName = `${Date.now()}_${cleanFileName.endsWith('.pdf') ? cleanFileName : cleanFileName + '.pdf'}`;
+      const filePath = path.join(UPLOADS_DIR, safeName);
+
+      let buffer: Buffer;
+      if (Buffer.isBuffer(req.body)) {
+        buffer = req.body;
+      } else if (req.body && typeof req.body === 'object' && req.body.pdfBase64) {
+        buffer = Buffer.from(req.body.pdfBase64, 'base64');
+      } else {
+        return res.status(400).json({ error: "PDF ma'lumotlari topilmadi." });
+      }
+
+      if (buffer.length === 0) {
+        return res.status(400).json({ error: "Fayl bo'sh (0 bayt)." });
+      }
+
+      fs.writeFileSync(filePath, buffer);
+      const pdfUrl = `/uploads/${safeName}`;
+
+      return res.json({
+        success: true,
+        pdfUrl,
+        fileName: safeName,
+        fileSize: buffer.length,
+      });
+    } catch (err: any) {
+      console.error('Error saving uploaded PDF:', err);
+      return res.status(500).json({ error: err?.message || 'PDF faylini saqlashda xatolik yuz berdi.' });
+    }
+  }
+);
 
 // --- Authentication Middleware ---
 export interface AuthRequest extends Request {
@@ -345,6 +398,68 @@ apiRouter.get('/books/:id', (req: Request, res: Response) => {
   }
 });
 
+// Auto-save books provided for test generation directly into library with deduplication
+// ("test yaratish uchun berilgan kitoblarni togridan togri kutubxonaga saqlagin . bitta kitobni ikki mara saqlama")
+apiRouter.post('/books/auto-save', (req: Request, res: Response) => {
+  try {
+    const {
+      title,
+      author,
+      genre,
+      description,
+      coverImage,
+      pdfUrl,
+      fileSize,
+      pagesCount,
+      fullText,
+      uploadedBy,
+    } = req.body;
+
+    if (!title || !String(title).trim()) {
+      return res.status(400).json({ error: "Kitob nomi ko'rsatilishi shart." });
+    }
+
+    // Determine uploader name from auth token or body
+    let uploaderName = uploadedBy || 'Talaba';
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    if (token) {
+      const payload = verifyToken(token);
+      if (payload) {
+        const u = findUserById(payload.userId);
+        if (u) {
+          uploaderName = u.name;
+        }
+      }
+    }
+
+    const result = saveBookDeduped({
+      title: String(title).trim(),
+      author: author ? String(author).trim() : undefined,
+      genre: genre ? String(genre).trim() : 'Talaba kutubxonasi',
+      description: description ? String(description).trim() : "Test yaratish uchun taqdim etilgan kitob.",
+      coverImage: coverImage && typeof coverImage === 'string' ? coverImage : undefined,
+      pdfUrl: pdfUrl && typeof pdfUrl === 'string' ? pdfUrl : undefined,
+      fileSize: Number(fileSize) || 1024 * 100,
+      pagesCount: Number(pagesCount) || 1,
+      fullText: fullText ? String(fullText) : undefined,
+      uploadedBy: uploaderName,
+    });
+
+    return res.status(result.isNew ? 201 : 200).json({
+      success: true,
+      data: result.book,
+      isNew: result.isNew,
+      message: result.isNew
+        ? "Kitob kutubxonaga muvaffaqiyatli saqlandi!"
+        : "Kitob allaqachon kutubxonada mavjud (takrorlanmadi).",
+    });
+  } catch (error: any) {
+    console.error('Error auto-saving book to library:', error);
+    return res.status(500).json({ error: error?.message || 'Kitobni saqlashda xatolik yuz berdi.' });
+  }
+});
+
 // Admin-only CRUD operations
 apiRouter.post('/books', authenticateToken, requireAdmin, (req: AuthRequest, res: Response) => {
   try {
@@ -442,6 +557,25 @@ apiRouter.post('/analyze-book', async (req: Request, res: Response) => {
 
     const safeFileName = fileName && typeof fileName === 'string' ? fileName : 'Kitob.pdf';
     const analysis = await analyzeBookContent(fullText, safeFileName);
+
+    // Auto-save analyzed book to library without duplicating ("bitta kitobni ikki marta saqlama")
+    try {
+      if (analysis && analysis.title) {
+        saveBookDeduped({
+          title: analysis.title,
+          author: analysis.detectedAuthor || "Noma'lum muallif",
+          genre: 'Talaba kutubxonasi',
+          description: analysis.summary || "Test yaratish uchun taqdim etilgan kitob.",
+          fullText,
+          pagesCount: Math.max(1, Math.round(fullText.length / 1500)),
+          fileSize: Buffer.byteLength(fullText, 'utf-8'),
+          uploadedBy: 'Talaba',
+        });
+      }
+    } catch (saveErr) {
+      console.warn('Auto-save in analyze-book warning:', saveErr);
+    }
+
     return res.json({ success: true, data: analysis });
   } catch (error: any) {
     console.error('Error analyzing book:', error);
@@ -478,6 +612,21 @@ apiRouter.post('/generate-quiz', async (req: Request, res: Response) => {
       bookTitle: options.bookTitle || 'Kitob',
       language: options.language === 'en' ? 'en' : 'uz',
     };
+
+    // Auto-save test book to library without duplicating
+    try {
+      if (sanitizedOptions.bookTitle && fullText) {
+        saveBookDeduped({
+          title: sanitizedOptions.bookTitle,
+          fullText,
+          pagesCount: Math.max(1, Math.round(fullText.length / 1500)),
+          fileSize: Buffer.byteLength(fullText, 'utf-8'),
+          uploadedBy: 'Talaba',
+        });
+      }
+    } catch (saveErr) {
+      console.warn('Auto-save in generate-quiz warning:', saveErr);
+    }
 
     const questions = await generateQuizQuestions(fullText, sanitizedOptions);
     return res.json({ success: true, data: questions });
@@ -544,6 +693,10 @@ apiRouter.post('/quizzes', (req: Request, res: Response) => {
       questionTypes,
       questions,
       timeTakenSeconds,
+      isProvisional,
+      completionPercentage,
+      accuracyPercentage,
+      tabSwitchCount,
     } = req.body;
 
     let finalStudentName = studentName?.trim();
@@ -583,6 +736,10 @@ apiRouter.post('/quizzes', (req: Request, res: Response) => {
       questionTypes,
       questions,
       timeTakenSeconds,
+      isProvisional,
+      completionPercentage,
+      accuracyPercentage,
+      tabSwitchCount,
     });
 
     return res.json({

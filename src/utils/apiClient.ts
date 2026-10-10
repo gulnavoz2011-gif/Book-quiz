@@ -247,6 +247,71 @@ export async function createLibraryBook(
   return data.data;
 }
 
+/**
+ * Automatically saves a book provided for test generation directly to the library.
+ * Server prevents duplicate entries ("bitta kitobni ikki marta saqlama").
+ */
+export async function apiAutoSaveBookToLibrary(
+  bookData: {
+    title: string;
+    author?: string;
+    genre?: string;
+    description?: string;
+    coverImage?: string;
+    pdfUrl?: string;
+    fileSize?: number;
+    pagesCount?: number;
+    fullText?: string;
+    uploadedBy?: string;
+  },
+  token?: string | null
+): Promise<{ success: boolean; data: LibraryBook; isNew: boolean; message: string }> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch('/api/books/auto-save', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(bookData),
+  });
+
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || 'Kitobni kutubxonaga saqlashda xatolik yuz berdi.');
+  }
+
+  return data;
+}
+
+/**
+ * Uploads original PDF file to server verbatim so it is preserved byte-for-byte.
+ * Ensures the exact PDF variant is stored without any alteration.
+ */
+export async function apiUploadPdfFile(
+  file: File
+): Promise<{ success: boolean; pdfUrl: string; fileName: string; fileSize: number }> {
+  const arrayBuffer = await file.arrayBuffer();
+  const response = await fetch('/api/upload-pdf', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/pdf',
+      'x-file-name': encodeURIComponent(file.name),
+    },
+    body: arrayBuffer,
+  });
+
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || 'PDF faylini serverga yuklashda xatolik yuz berdi.');
+  }
+
+  return data;
+}
+
 export async function updateLibraryBook(
   id: string,
   bookData: Partial<LibraryBook>,

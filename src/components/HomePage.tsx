@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { SAMPLE_BOOKS, SampleBook } from '../data/sampleBooks';
 import { extractTextFromPdf, formatFileSize, ExtractionProgress } from '../utils/pdfExtractor';
+import { apiUploadPdfFile } from '../utils/apiClient';
 import { UploadedBook } from '../types';
 import { useLanguage } from '../context/LanguageContext';
 
@@ -36,6 +37,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onBookReady }) => {
     numPages: number;
     wordCount: number;
     fullText: string;
+    pdfUrl: string;
   } | null>(null);
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
@@ -96,9 +98,24 @@ export const HomePage: React.FC<HomePageProps> = ({ onBookReady }) => {
 
     setIsProcessing(true);
     try {
+      // 1. Create instant local blob URL so reader has exact original PDF immediately
+      const localPdfUrl = URL.createObjectURL(file);
+
+      // 2. Extract text for AI comprehension
       const extracted = await extractTextFromPdf(file, (p) => {
         setProgress(p);
       });
+
+      // 3. Upload original PDF to server so it is stored permanently without modification
+      let finalPdfUrl = localPdfUrl;
+      try {
+        const uploadRes = await apiUploadPdfFile(file);
+        if (uploadRes && uploadRes.pdfUrl) {
+          finalPdfUrl = uploadRes.pdfUrl;
+        }
+      } catch (uploadErr) {
+        console.warn('PDF persistence upload non-fatal warning, using local object URL:', uploadErr);
+      }
 
       setExtractedPreview({
         fileName: extracted.fileName,
@@ -106,6 +123,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onBookReady }) => {
         numPages: extracted.numPages,
         wordCount: extracted.wordCount,
         fullText: extracted.fullText,
+        pdfUrl: finalPdfUrl,
       });
     } catch (err: any) {
       console.error('PDF extraction failed:', err);
@@ -128,6 +146,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onBookReady }) => {
       wordCount: extractedPreview.wordCount,
       charCount: extractedPreview.fullText.length,
       fullText: extractedPreview.fullText,
+      pdfUrl: extractedPreview.pdfUrl,
       analysis: null,
       uploadedAt: new Date().toISOString(),
       isSample: false,

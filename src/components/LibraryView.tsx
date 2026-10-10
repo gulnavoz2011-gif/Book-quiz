@@ -134,7 +134,9 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               {language === 'uz' ? 'Kitoblar kutubxonasi & Katalog' : 'Curated Book Library & Catalog'}
             </h1>
             <p className="text-sm text-slate-600 mt-1 max-w-2xl">
-              {t.library.subtitle}
+              {language === 'uz'
+                ? "Barcha darsliklar, badiiy asarlar va test yaratish uchun berilgan kitoblar (500 MB gacha) kutubxonada saqlangan. Mutolaa qiling yoki test topshiring."
+                : t.library.subtitle}
             </p>
           </div>
 
@@ -243,6 +245,15 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                     {book.genre}
                   </span>
                 </div>
+
+                {book.uploadedBy && (
+                  <div className="absolute top-3 right-3">
+                    <span className="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-blue-600/90 backdrop-blur-sm text-white border border-white/20 shadow-xs flex items-center gap-1">
+                      <Sparkles className="w-2.5 h-2.5 text-yellow-300" />
+                      <span>{book.uploadedBy === 'Talaba' ? (language === 'uz' ? 'Test kitobi' : 'Quiz Book') : book.uploadedBy}</span>
+                    </span>
+                  </div>
+                )}
 
                 <div className="absolute bottom-3 left-3 right-3 text-white">
                   <h3 className="text-base font-bold leading-snug drop-shadow line-clamp-1">

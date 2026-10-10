@@ -141,35 +141,87 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
           </span>
         </div>
 
-        {/* Detailed Breakdown Grid */}
-        <div className="grid grid-cols-3 gap-3 sm:gap-4 max-w-md mx-auto pt-6 border-t border-slate-100">
-          <div className="p-3 sm:p-4 rounded-xl bg-emerald-50/70 border border-emerald-100">
+        {/* Detailed Breakdown Grid (All 7 required summary metrics) */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-lg mx-auto pt-6 border-t border-slate-100 mb-4">
+          <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-center">
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+              {language === 'uz' ? 'Jami savollar' : 'Total Questions'}
+            </span>
+            <span className="font-heading text-xl font-black text-slate-900">
+              {result.totalQuestions}
+            </span>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-blue-50/70 border border-blue-200 text-center">
+            <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider block mb-1">
+              {language === 'uz' ? 'Javob berilgan' : 'Answered'}
+            </span>
+            <span className="font-heading text-xl font-black text-blue-900">
+              {result.correctAnswers + result.incorrectAnswers}
+              <span className="text-xs font-normal text-blue-600"> / {result.totalQuestions}</span>
+            </span>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-emerald-50/70 border border-emerald-100 text-center">
             <div className="flex items-center justify-center gap-1 text-emerald-700 mb-1">
-              <CheckCircle2 className="w-4 h-4" />
-              <span className="text-xs font-bold uppercase tracking-wider">{t.results.correct}</span>
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span className="text-[10px] font-bold uppercase tracking-wider">{t.results.correct}</span>
             </div>
-            <span className="font-heading text-2xl font-black text-emerald-950">
+            <span className="font-heading text-xl font-black text-emerald-950">
               {result.correctAnswers}
             </span>
           </div>
 
-          <div className="p-3 sm:p-4 rounded-xl bg-rose-50/70 border border-rose-100">
+          <div className="p-3.5 rounded-2xl bg-rose-50/70 border border-rose-100 text-center">
             <div className="flex items-center justify-center gap-1 text-rose-700 mb-1">
-              <XCircle className="w-4 h-4" />
-              <span className="text-xs font-bold uppercase tracking-wider">{t.results.incorrect}</span>
+              <XCircle className="w-3.5 h-3.5" />
+              <span className="text-[10px] font-bold uppercase tracking-wider">{t.results.incorrect}</span>
             </div>
-            <span className="font-heading text-2xl font-black text-rose-950">
+            <span className="font-heading text-xl font-black text-rose-950">
               {result.incorrectAnswers}
             </span>
           </div>
 
-          <div className="p-3 sm:p-4 rounded-xl bg-slate-50 border border-slate-200">
+          <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-center">
             <div className="flex items-center justify-center gap-1 text-slate-600 mb-1">
-              <AlertCircle className="w-4 h-4" />
-              <span className="text-xs font-bold uppercase tracking-wider">{t.results.skipped}</span>
+              <AlertCircle className="w-3.5 h-3.5" />
+              <span className="text-[10px] font-bold uppercase tracking-wider">{t.results.skipped}</span>
             </div>
-            <span className="font-heading text-2xl font-black text-slate-900">
+            <span className="font-heading text-xl font-black text-slate-900">
               {result.unansweredQuestions}
+            </span>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-blue-50/80 border border-blue-200 text-center">
+            <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider block mb-1">
+              {language === 'uz' ? 'Tugatish foizi' : 'Completion'}
+            </span>
+            <span className="font-heading text-xl font-black text-blue-900">
+              {result.totalQuestions > 0
+                ? Math.round(((result.correctAnswers + result.incorrectAnswers) / result.totalQuestions) * 100)
+                : 0}
+              %
+            </span>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-indigo-50/80 border border-indigo-200 text-center">
+            <span className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider block mb-1">
+              {language === 'uz' ? 'Aniqlik darajasi' : 'Accuracy'}
+            </span>
+            <span className="font-heading text-xl font-black text-indigo-900">
+              {result.correctAnswers + result.incorrectAnswers > 0
+                ? Math.round((result.correctAnswers / (result.correctAnswers + result.incorrectAnswers)) * 100)
+                : 0}
+              %
+            </span>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-center">
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+              {language === 'uz' ? 'Tab almashish' : 'Tab Switches'}
+            </span>
+            <span className="font-heading text-xl font-black text-slate-700">
+              {result.tabSwitchCount || 0}
             </span>
           </div>
         </div>
